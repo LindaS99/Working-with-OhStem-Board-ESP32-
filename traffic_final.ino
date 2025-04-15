@@ -1,15 +1,23 @@
 #include <Arduino.h>
 
-// Pins für 7-Segment-Anzeige (0–6)
+// Pins for 7-Segment-Anzeige (0–6) used for real display
 const int SEG[] = {0, 1, 2, 3, 4, 5, 6};
 
-// Ampel 1 auf Binärcode (D8, D7)
+// Ampel 1 (D8, D7)
 #define L1_PIN_A D8
 #define L1_PIN_B D7
 
-// Ampel 2 auf Binärcode (D10, D9)
+// Ampel 2 (D10, D9)
 #define L2_PIN_A D10
 #define L2_PIN_B D9
+
+// Ampel LEDs (for displayTask)
+#define L1_RED    L1_PIN_A
+#define L1_YELLOW L1_PIN_B
+#define L1_GREEN  L1_PIN_B // green 0b10
+#define L2_RED    L2_PIN_A
+#define L2_YELLOW L2_PIN_B
+#define L2_GREEN  L2_PIN_B // green 0b10
 
 // Zeiten in ms
 const int RED_TIME    = 5000;
@@ -19,12 +27,45 @@ const int DISPLAY_INTERVAL = 1000;
 
 volatile int countdown = 0;
 
-void setAmpel(uint8_t pinA, uint8_t pinB, uint8_t state) {
-  digitalWrite(pinA, bitRead(state, 1));  // höheres Bit
-  digitalWrite(pinB, bitRead(state, 0));  // niederes Bit
+// Define states FSM
+enum TrafficLightState { RED, GREEN, YELLOW };
+TrafficLightState currentState = RED;
+
+// FSM Task for Ampel 1
+void fsmTask(void *pvParameters) {
+  while (true) {
+    switch (currentState) {
+      case RED:
+        setAmpel(L1_PIN_A, L1_PIN_B, 0b11); // Red
+        countdown = RED_TIME / 1000;
+        vTaskDelay(pdMS_TO_TICKS(RED_TIME));
+        currentState = GREEN;
+        break;
+
+      case GREEN:
+        setAmpel(L1_PIN_A, L1_PIN_B, 0b10); // Green
+        countdown = GREEN_TIME / 1000;
+        vTaskDelay(pdMS_TO_TICKS(GREEN_TIME));
+        currentState = YELLOW;
+        break;
+
+      case YELLOW:
+        setAmpel(L1_PIN_A, L1_PIN_B, 0b01); // Yellow
+        countdown = YELLOW_TIME / 1000;
+        vTaskDelay(pdMS_TO_TICKS(YELLOW_TIME));
+        currentState = RED;
+        break;
+    }
+  }
 }
 
-// ---------- Display-Logik ----------
+void setAmpel(uint8_t pinA, uint8_t pinB, uint8_t state) {
+  digitalWrite(pinA, bitRead(state, 1));  // highest Bit
+  digitalWrite(pinB, bitRead(state, 0));  // lowest Bit
+}
+
+// ---------- Display ---------- 
+//for real display:
 void displayNumber(int number) {
   bool seg[7];
   switch (number) {
@@ -38,104 +79,7 @@ void displayNumber(int number) {
   for (int i = 0; i < 7; i++) digitalWrite(SEG[i], seg[i]);
 }
 
-// ---------- Task: Ampel 1 ----------
-void light1Task(void *pvParameters) {
-  while (true) {
-    setAmpel(L1_PIN_A, L1_PIN_B, 0b11); // Rot
-    countdown = RED_TIME / 1000;
-    vTaskDelay(pdMS_TO_TICKS(RED_TIME));
 
-    setAmpel(L1_PIN_A, L1_PIN_B, 0b10); // Grün
-    countdown = GREEN_TIME / 1000;
-    vTaskDelay(pdMS_TO_TICKS(GREEN_TIME));
-
-    setAmpel(L1_PIN_A, L1_PIN_B, 0b01); // Gelb
-    countdown = YELLOW_TIME / 1000;
-    vTaskDelay(pdMS_TO_TICKS(YELLOW_TIME));
-
-    setAmpel(L1_PIN_A, L1_PIN_B, 0b00); // AUS (nur kurz)
-  }
-}
-
-// ---------- Task: Ampel 2 (gegenläufig) ----------
-void light2Task(void *pvParameters) {
-  vTaskDelay(pdMS_TO_TICKS(RED_TIME));  // Startversatz
-
-  while (true) {
-    setAmpel(L2_PIN_A, L2_PIN_B, 0b10); // Grün
-    vTaskDelay(pdMS_TO_TICKS(GREEN_TIME));
-
-    setAmpel(L2_PIN_A, L2_PIN_B, 0b01); // Gelb
-    vTaskDelay(pdMS_TO_TICKS(YELLOW_TIME));
-
-    setAmpel(L2_PIN_A, L2_PIN_B, 0b11); // Rot
-    vTaskDelay(pdMS_TO_TICKS(RED_TIME));
-  }
-}
-
-// ---------- Task: Anzeige ----------
-void displayTask(void *pvParameters) {
-  while (true) {
-    if (countdown >= 0) {
-      Serial.print("Countdown: ");
-      Serial.println(countdown);
-      countdown--;
-    } else {
-      Serial.println("Ampel aus");
-    }
-    vTaskDelay(pdMS_TO_TICKS(DISPLAY_INTERVAL));
-  }
-}
-
-// ---------- Setup ----------
-void setup() {
-  Serial.begin(115200);
-  for (int i = 0; i < 7; i++) pinMode(SEG[i], OUTPUT);
-  pinMode(L1_PIN_A, OUTPUT); pinMode(L1_PIN_B, OUTPUT);
-  pinMode(L2_PIN_A, OUTPUT); pinMode(L2_PIN_B, OUTPUT);
-
-  setAmpel(L2_PIN_A, L2_PIN_B, 0b11);  // Ampel 2 startet mit Rot
-
-  xTaskCreatePinnedToCore(light1Task, "Light1", 1000, NULL, 1, NULL, 1);
-  xTaskCreatePinnedToCore(light2Task, "Light2", 1000, NULL, 1, NULL, 1);
-  xTaskCreatePinnedToCore(displayTask, "Display", 1000, NULL, 1, NULL, 1);
-}
-
-void loop() {
-  // leer, da alles über Tasks läuft
-}
-
-
-/* Test LED
-
-#define PIN_A D8  // D8
-#define PIN_B D7  // D7
-
-void setAmpel(uint8_t state) {
-  digitalWrite(PIN_A, bitRead(state, 1));  // höherwertiges Bit
-  digitalWrite(PIN_B, bitRead(state, 0));  // niederwertiges Bit
-}
-
-void setup() {
-  pinMode(PIN_A, OUTPUT);
-  pinMode(PIN_B, OUTPUT);
-}
-
-void loop() {
-  setAmpel(0b00); // OFF
-  delay(1000);
-
-  setAmpel(0b01); // Yellow
-  delay(1000);
-
-  setAmpel(0b10); // Green
-  delay(1000);
-
-  setAmpel(0b11); // Red
-  delay(1000);
-}
-*/
-/* Pretty Display
 void printAmpel(const char* label, bool red, bool yellow, bool green) {
   Serial.println();
   Serial.println(label);
@@ -154,9 +98,10 @@ void printAmpel(const char* label, bool red, bool yellow, bool green) {
   Serial.println("└─────┘");
 }
 
+// ---------- Task: Display ----------
 void displayTask(void *pvParameters) {
   while (true) {
-    // Ampelzustände lesen (nur Anzeige, keine Steuerung)
+    // Ampel states read only
     bool l1_red    = digitalRead(L1_RED);
     bool l1_yellow = digitalRead(L1_YELLOW);
     bool l1_green  = digitalRead(L1_GREEN);
@@ -182,4 +127,37 @@ void displayTask(void *pvParameters) {
     vTaskDelay(pdMS_TO_TICKS(DISPLAY_INTERVAL));
   }
 }
-*/
+
+// ---------- Task: Ampel 2 ----------
+void light2Task(void *pvParameters) {
+  vTaskDelay(pdMS_TO_TICKS(RED_TIME));  // delay to Ampel 1
+
+  while (true) {
+    setAmpel(L2_PIN_A, L2_PIN_B, 0b10); // Green
+    vTaskDelay(pdMS_TO_TICKS(GREEN_TIME));
+
+    setAmpel(L2_PIN_A, L2_PIN_B, 0b01); // Yellow
+    vTaskDelay(pdMS_TO_TICKS(YELLOW_TIME));
+
+    setAmpel(L2_PIN_A, L2_PIN_B, 0b11); // Red
+    vTaskDelay(pdMS_TO_TICKS(RED_TIME));
+  }
+}
+
+// ---------- Setup ----------
+void setup() {
+  Serial.begin(115200);
+  for (int i = 0; i < 7; i++) pinMode(SEG[i], OUTPUT);
+  pinMode(L1_PIN_A, OUTPUT); pinMode(L1_PIN_B, OUTPUT);
+  pinMode(L2_PIN_A, OUTPUT); pinMode(L2_PIN_B, OUTPUT);
+
+  setAmpel(L2_PIN_A, L2_PIN_B, 0b11);  // Ampel 2 starts with Red
+
+  xTaskCreatePinnedToCore(fsmTask, "FSM", 1000, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(light2Task, "Light2", 1000, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(displayTask, "Display", 1000, NULL, 1, NULL, 1);
+}
+
+void loop() {
+
+}

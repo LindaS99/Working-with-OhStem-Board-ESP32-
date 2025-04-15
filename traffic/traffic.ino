@@ -1,3 +1,7 @@
+/*
+Disclaimer:
+The code has not been fully tested, as the necessary USB cable was not available at the time of development. Please verify functionality in your environment.
+*/
 #include <Arduino.h>
 #include "scheduler.h"
 
@@ -119,15 +123,15 @@ void displayTask() {
 }
 
 void setup() {
-  // Initialize Serial Communication
+  // Serial Communication
   Serial.begin(115200);
 
-  // Initialize Pins
+  // Pins
   for (int i = 0; i < 7; i++) pinMode(SEG[i], OUTPUT);
   pinMode(L1_PIN_A, OUTPUT); pinMode(L1_PIN_B, OUTPUT);
   pinMode(L2_PIN_A, OUTPUT); pinMode(L2_PIN_B, OUTPUT);
 
-  // Initialize Scheduler
+  // Scheduler
   SCH_Init();
 
   // Add tasks to scheduler
@@ -137,5 +141,5 @@ void setup() {
 }
 
 void loop() {
-  SCH_Dispatch_Tasks(); // Dispatch tasks based on scheduler
+  SCH_Dispatch_Tasks();
 }
